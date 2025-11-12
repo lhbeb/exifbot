@@ -1,0 +1,38 @@
+{
+  "builds": [
+    {
+      "src": "api/process_product.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "api/health.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "api/login_tracking.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/process_product",
+      "dest": "/api/process_product.py"
+    },
+    {
+      "src": "/api/health",
+      "dest": "/api/health.py"
+    },
+    {
+      "src": "/api/login_tracking",
+      "dest": "/api/login_tracking.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
+    }
+  ]
+}
