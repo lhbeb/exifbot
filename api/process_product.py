@@ -397,22 +397,24 @@ def add_exif_data(img, team_member_token, session):
             "1st": {}  # Thumbnail IFD
         }
         
-        # Add unofficial but commonly used tags (LensModel, LensMake, LensInfo, HostComputer)
-        # Also add OffsetTime fields (timezone offsets)
+        # Add unofficial but commonly used tags AFTER initial dump attempt
+        # These will be added to a copy if the first dump succeeds
+        unofficial_tags = {}
         try:
-            exif_dict["Exif"][0xA432] = lens_model.encode('utf-8')  # LensModel
-            exif_dict["Exif"][0xA433] = make.encode('utf-8')  # LensMake
+            unofficial_tags[0xA432] = lens_model.encode('utf-8')  # LensModel
+            unofficial_tags[0xA433] = make.encode('utf-8')  # LensMake
             if lens_info:
-                exif_dict["Exif"][0xA434] = lens_info.encode('utf-8')  # LensInfo
-            exif_dict["Exif"][0xA435] = lens_id.encode('utf-8')  # LensID (unofficial)
-            exif_dict["Exif"][0x013C] = model_name.encode('utf-8')  # HostComputer
+                unofficial_tags[0xA434] = lens_info.encode('utf-8')  # LensInfo
+            unofficial_tags[0xA435] = lens_id.encode('utf-8')  # LensID (unofficial)
+            unofficial_tags[0x013C] = model_name.encode('utf-8')  # HostComputer
             
             # OffsetTime fields (timezone offsets) - EXIF tags 0x9010, 0x9011, 0x9012
-            exif_dict["Exif"][0x9010] = offset_time_original  # OffsetTimeOriginal
-            exif_dict["Exif"][0x9011] = offset_time_digitized  # OffsetTimeDigitized
-            exif_dict["Exif"][0x9012] = offset_time  # OffsetTime
-        except:
-            pass  # Not critical if unsupported
+            unofficial_tags[0x9010] = offset_time_original  # OffsetTimeOriginal
+            unofficial_tags[0x9011] = offset_time_digitized  # OffsetTimeDigitized
+            unofficial_tags[0x9012] = offset_time  # OffsetTime
+        except Exception as e:
+            print(f"Warning: Failed to prepare unofficial tags: {e}")
+            unofficial_tags = {}
         
         # Add thumbnail if generated
         if thumbnail_data:
@@ -424,54 +426,181 @@ def add_exif_data(img, team_member_token, session):
             except:
                 pass  # Thumbnail addition is optional
         
-        # Try to add lens information if supported (some piexif versions don't have these)
-        try:
-            # These are unofficial but commonly used tags
-            exif_dict["Exif"][0xA432] = lens_model.encode('utf-8')  # LensModel (unofficial)
-            exif_dict["Exif"][0xA433] = make.encode('utf-8')  # LensMake (unofficial)
-        except:
-            pass  # Not critical if unsupported
+        # Convert EXIF dict to bytes with proper error handling
+        # First try without unofficial tags (they might cause issues)
+        exif_bytes = None
+        exif_dict_clean = {
+            "0th": exif_dict["0th"],
+            "Exif": {k: v for k, v in exif_dict["Exif"].items() if k not in unofficial_tags},
+            "GPS": exif_dict["GPS"],
+            "1st": exif_dict.get("1st", {})
+        }
         
-        # Convert EXIF dict to bytes
         try:
-            exif_bytes = piexif.dump(exif_dict)
+            exif_bytes = piexif.dump(exif_dict_clean)
+            print(f"EXIF dump successful (clean): {len(exif_bytes)} bytes")
+            
+            # If successful, try adding unofficial tags
+            if unofficial_tags:
+                try:
+                    exif_dict_with_unofficial = exif_dict_clean.copy()
+                    exif_dict_with_unofficial["Exif"] = exif_dict_with_unofficial["Exif"].copy()
+                    exif_dict_with_unofficial["Exif"].update(unofficial_tags)
+                    exif_bytes = piexif.dump(exif_dict_with_unofficial)
+                    print(f"EXIF dump successful (with unofficial tags): {len(exif_bytes)} bytes")
+                except Exception as e_unofficial:
+                    print(f"Warning: Could not add unofficial tags, using clean EXIF: {e_unofficial}")
+                    # Continue with clean EXIF
         except Exception as e:
-            print(f"Warning: Some EXIF fields may not be supported: {e}")
-            # Try again with a minimal set
-            minimal_exif = {
-                "0th": exif_dict["0th"],
-                "Exif": {k: v for k, v in exif_dict["Exif"].items() if k in [
-                    piexif.ExifIFD.DateTimeOriginal,
-                    piexif.ExifIFD.DateTimeDigitized,
-                    piexif.ExifIFD.FocalLength,
-                    piexif.ExifIFD.FNumber,
-                    piexif.ExifIFD.ISOSpeedRatings,
-                    piexif.ExifIFD.ExposureTime,
-                    piexif.ExifIFD.PixelXDimension,
-                    piexif.ExifIFD.PixelYDimension,
-                    piexif.ExifIFD.ColorSpace,
-                ]},
-                "GPS": exif_dict["GPS"],
-                "1st": {}
-            }
-            exif_bytes = piexif.dump(minimal_exif)
+            print(f"ERROR: piexif.dump() failed: {e}")
+            print(f"EXIF dict keys: 0th={list(exif_dict.get('0th', {}).keys())}, Exif={list(exif_dict.get('Exif', {}).keys())[:10]}...")
+            traceback.print_exc()
+            
+            # Try again with a minimal set (remove problematic fields)
+            try:
+                minimal_exif = {
+                    "0th": {
+                        piexif.ImageIFD.Make: make.encode('utf-8'),
+                        piexif.ImageIFD.Model: model_name.encode('utf-8'),
+                        piexif.ImageIFD.Software: ios_version.encode('utf-8'),
+                        piexif.ImageIFD.DateTime: datetime_str_file,
+                        piexif.ImageIFD.XResolution: (resolution, 1),
+                        piexif.ImageIFD.YResolution: (resolution, 1),
+                        piexif.ImageIFD.ResolutionUnit: resolution_unit,
+                    },
+                    "Exif": {
+                        piexif.ExifIFD.ExifVersion: b"0232",
+                        piexif.ExifIFD.DateTimeOriginal: datetime_str_original,
+                        piexif.ExifIFD.DateTimeDigitized: datetime_str_digitized,
+                        piexif.ExifIFD.FocalLength: focal_length_tuple,
+                        piexif.ExifIFD.FocalLengthIn35mmFilm: focal_length_35mm,
+                        piexif.ExifIFD.FNumber: aperture_tuple,
+                        piexif.ExifIFD.ApertureValue: aperture_value,
+                        piexif.ExifIFD.ISOSpeedRatings: iso,
+                        piexif.ExifIFD.ExposureTime: (exposure_numerator, exposure_denominator),
+                        piexif.ExifIFD.PixelXDimension: img.size[0],
+                        piexif.ExifIFD.PixelYDimension: img.size[1],
+                        piexif.ExifIFD.ColorSpace: 65535,
+                    },
+                    "GPS": exif_dict["GPS"],
+                    "1st": {}
+                }
+                exif_bytes = piexif.dump(minimal_exif)
+                print(f"Minimal EXIF dump successful: {len(exif_bytes)} bytes")
+            except Exception as e2:
+                print(f"ERROR: Minimal EXIF dump also failed: {e2}")
+                traceback.print_exc()
+                # Last resort: basic EXIF only
+                try:
+                    basic_exif = {
+                        "0th": {
+                            piexif.ImageIFD.Make: make.encode('utf-8'),
+                            piexif.ImageIFD.Model: model_name.encode('utf-8'),
+                        },
+                        "Exif": {
+                            piexif.ExifIFD.DateTimeOriginal: datetime_str_original,
+                        },
+                    }
+                    exif_bytes = piexif.dump(basic_exif)
+                    print(f"Basic EXIF dump successful: {len(exif_bytes)} bytes")
+                except Exception as e3:
+                    print(f"ERROR: Even basic EXIF failed: {e3}")
+                    exif_bytes = None
         
         # Save image with EXIF data
+        # Ensure image is in RGB mode (required for JPEG with EXIF)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
         output = io.BytesIO()
-        img.save(output, format='JPEG', exif=exif_bytes, quality=95, optimize=False)
+        if exif_bytes:
+            try:
+                # Method 1: Use exif parameter (PIL/Pillow standard)
+                img.save(output, format='JPEG', exif=exif_bytes, quality=95, optimize=False)
+                output.seek(0)
+                test_data = output.getvalue()
+                
+                # Verify EXIF was actually embedded
+                test_img = Image.open(io.BytesIO(test_data))
+                has_exif = False
+                if hasattr(test_img, '_getexif') and test_img._getexif():
+                    has_exif = True
+                elif 'exif' in test_img.info:
+                    has_exif = True
+                elif hasattr(test_img, 'getexif'):
+                    try:
+                        exif_data = test_img.getexif()
+                        if exif_data:
+                            has_exif = True
+                    except:
+                        pass
+                
+                if has_exif:
+                    print(f"✓ Image saved with EXIF data (verified)")
+                else:
+                    print(f"⚠ WARNING: EXIF parameter used but verification failed, trying alternative method")
+                    # Method 2: Use piexif.insert() to inject EXIF into JPEG bytes
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=95, optimize=False)
+                    jpeg_bytes = output.getvalue()
+                    try:
+                        image_data = piexif.insert(exif_bytes, jpeg_bytes)
+                        print(f"✓ EXIF inserted using piexif.insert()")
+                        output = io.BytesIO(image_data)
+                    except Exception as e2:
+                        print(f"ERROR: piexif.insert() also failed: {e2}")
+                        # Fall back to image without EXIF
+                        output = io.BytesIO(jpeg_bytes)
+                        print(f"Image saved WITHOUT EXIF (all methods failed)")
+            except Exception as e:
+                print(f"ERROR: Failed to save image with EXIF: {e}")
+                traceback.print_exc()
+                # Try alternative: save first, then inject EXIF
+                try:
+                    output_temp = io.BytesIO()
+                    img.save(output_temp, format='JPEG', quality=95, optimize=False)
+                    jpeg_bytes = output_temp.getvalue()
+                    image_data = piexif.insert(exif_bytes, jpeg_bytes)
+                    output = io.BytesIO(image_data)
+                    print(f"✓ EXIF inserted using piexif.insert() (fallback method)")
+                except Exception as e2:
+                    print(f"ERROR: piexif.insert() fallback also failed: {e2}")
+                    # Final fallback: image without EXIF
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=95, optimize=False)
+                    print(f"Image saved WITHOUT EXIF (all methods failed)")
+        else:
+            # No EXIF data available
+            print(f"WARNING: No EXIF data to embed, saving image without EXIF")
+            img.save(output, format='JPEG', quality=95, optimize=False)
+        
         output.seek(0)
         image_data = output.getvalue()
         
-        print(f"EXIF data added: {model_name} (iOS {ios_version}), GPS: {lat:.4f}, {lon:.4f}, ISO: {iso}, Exposure: 1/{exposure_denominator}, Size: {len(image_data)} bytes")
+        # Verify EXIF was embedded by trying to read it back
+        try:
+            verify_img = Image.open(io.BytesIO(image_data))
+            if hasattr(verify_img, '_getexif') and verify_img._getexif():
+                print(f"✓ EXIF verified: Image contains EXIF data")
+            elif 'exif' in verify_img.info:
+                print(f"✓ EXIF verified: Image contains EXIF in info")
+            else:
+                print(f"✗ WARNING: EXIF verification failed - no EXIF found in saved image")
+        except Exception as e:
+            print(f"EXIF verification error: {e}")
+        
+        print(f"EXIF processing complete: {model_name} (iOS {ios_version}), GPS: {lat:.4f}, {lon:.4f}, ISO: {iso}, Exposure: 1/{exposure_denominator}, Size: {len(image_data)} bytes")
         
         return image_data
         
     except Exception as e:
-        print(f"Error adding EXIF data: {e}")
+        print(f"CRITICAL ERROR in add_exif_data: {e}")
         traceback.print_exc()
-        # Return image without EXIF if there's an error
+        # Return image without EXIF if there's a critical error
+        # But log it clearly so we know what went wrong
         output = io.BytesIO()
         img.save(output, format='JPEG', quality=95, optimize=False)
+        print(f"Returned image WITHOUT EXIF due to error")
         return output.getvalue()
 
 def _decimal_to_dms(decimal):
