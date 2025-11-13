@@ -13,6 +13,7 @@ import random
 import datetime
 import time
 import urllib.parse
+import math
 
 # Load environment variables
 load_dotenv()
@@ -33,29 +34,107 @@ def reset_session():
     global session_data
     session_data = {}
 
+def generate_device_serial():
+    """Generate realistic Apple device serial number"""
+    # Format: F2LXXXXXXXXX (12 characters, alphanumeric)
+    chars = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'  # Exclude I, O for clarity
+    return 'F2L' + ''.join(random.choice(chars) for _ in range(9))
+
+def generate_lens_serial():
+    """Generate realistic lens serial number"""
+    return f"L{random.randint(100000, 999999)}"
+
 def get_session_data(gps_location="usa"):
     """Get or create session data for consistent processing"""
     if not session_data:
-        # Random iPhone selection per batch
+        # Random iPhone selection per batch with iOS version mapping
+        # Based on real iPhone EXIF data analysis
         iphone_models = [
-            {"name": "iPhone 14 Pro Max", "megapixels": 48.0, "base_resolution": (4032, 3024)},
-            {"name": "iPhone 16 Pro Max", "megapixels": 48.0, "base_resolution": (5712, 4284)}
+            {
+                "name": "iPhone 14",
+                "megapixels": 12.2,
+                "base_resolution": (4032, 3024),
+                "ios_version": random.choice(["16.5", "16.6", "16.7", "17.0", "17.1"]),
+                "lens_model": "iPhone 14 back dual wide camera 5.7mm f/1.5",
+                "lens_id": "iPhone 14 back dual wide camera 5.7mm f/1.5",
+                "lens_info": "1.539999962-5.699999809mm f/1.5-2.4",
+                "focal_length": (57, 10),  # 5.7mm in tenths
+                "focal_length_35mm": 26,
+                "aperture": (15, 10),  # f/1.5
+                "fov": 69.4
+            },
+            {
+                "name": "iPhone 14 Pro Max",
+                "megapixels": 48.0,
+                "base_resolution": (4032, 3024),
+                "ios_version": random.choice(["17.6.1", "17.7", "18.0", "18.0.1", "18.1"]),
+                "lens_model": "iPhone 14 Pro Max back triple camera 6.86mm f/1.78",
+                "lens_id": "iPhone 14 Pro Max back triple camera 6.86mm f/1.78",
+                "lens_info": "1.539999962-6.859999657mm f/1.78-2.8",
+                "focal_length": (686, 100),  # 6.86mm in hundredths
+                "focal_length_35mm": 24,
+                "aperture": (178, 100),  # f/1.78
+                "fov": 77.0
+            },
+            {
+                "name": "iPhone 16 Pro Max",
+                "megapixels": 48.0,
+                "base_resolution": (5712, 4284),
+                "ios_version": random.choice(["18.0", "18.0.1", "18.1", "18.2"]),
+                "lens_model": "iPhone 16 Pro Max back triple camera 6.86mm f/1.78",
+                "lens_id": "iPhone 16 Pro Max back triple camera 6.86mm f/1.78",
+                "lens_info": "1.539999962-6.859999657mm f/1.78-2.8",
+                "focal_length": (686, 100),
+                "focal_length_35mm": 24,
+                "aperture": (178, 100),
+                "fov": 77.0
+            }
         ]
-        session_data['iphone'] = random.choice(iphone_models)
+        selected_iphone = random.choice(iphone_models)
+        session_data['iphone'] = selected_iphone
         
-        # GPS locations
+        # Generate unique device identifiers for this session
+        session_data['device_serial'] = generate_device_serial()
+        session_data['lens_serial'] = generate_lens_serial()
+        
+        # GPS locations with more realistic variation
         gps_locations = {
-            "usa": (37.7749, -122.4194, "United States"),
-            "germany": (52.5200, 13.4050, "Germany"),
-            "canada": (43.6532, -79.3832, "Canada"),
-            "australia": (-33.8688, 151.2093, "Australia"),
-            "france": (48.8566, 2.3522, "France")
+            "usa": [
+                (37.7749, -122.4194, "San Francisco, United States"),
+                (40.7128, -74.0060, "New York, United States"),
+                (34.0522, -118.2437, "Los Angeles, United States"),
+                (41.8781, -87.6298, "Chicago, United States"),
+            ],
+            "germany": [
+                (52.5200, 13.4050, "Berlin, Germany"),
+                (48.1351, 11.5820, "Munich, Germany"),
+                (53.5511, 9.9937, "Hamburg, Germany"),
+            ],
+            "canada": [
+                (43.6532, -79.3832, "Toronto, Canada"),
+                (45.5017, -73.5673, "Montreal, Canada"),
+                (49.2827, -123.1207, "Vancouver, Canada"),
+            ],
+            "australia": [
+                (-33.8688, 151.2093, "Sydney, Australia"),
+                (-37.8136, 144.9631, "Melbourne, Australia"),
+                (-27.4698, 153.0251, "Brisbane, Australia"),
+            ],
+            "france": [
+                (48.8566, 2.3522, "Paris, France"),
+                (45.7640, 4.8357, "Lyon, France"),
+                (43.2965, 5.3698, "Marseille, France"),
+            ]
         }
         
-        lat, lon, country = gps_locations.get(gps_location.lower(), gps_locations["usa"])
-        session_data['base_lat'] = lat + random.uniform(-0.01, 0.01)
-        session_data['base_lon'] = lon + random.uniform(-0.01, 0.01)
-        session_data['country'] = country
+        # Select random city from location
+        city_options = gps_locations.get(gps_location.lower(), gps_locations["usa"])
+        base_lat, base_lon, city_name = random.choice(city_options)
+        
+        # Add realistic variation (walking distance ~100-500m)
+        session_data['base_lat'] = base_lat + random.uniform(-0.005, 0.005)
+        session_data['base_lon'] = base_lon + random.uniform(-0.005, 0.005)
+        session_data['country'] = city_name
         
     return session_data
 
@@ -75,65 +154,324 @@ def convert_to_jpg(image_bytes, preserve_original_size=True):
     enhancer = ImageEnhance.Contrast(img_processed)
     img_processed = enhancer.enhance(1.01)  # Barely noticeable
     
-    # Save as JPEG with high quality
+    # Save as JPEG with high quality (optimize=False to prevent over-compression)
+    # Quality 95 ensures good file size while maintaining quality
     output = io.BytesIO()
-    img_processed.save(output, format='JPEG', quality=95, optimize=True)
-    return output.getvalue()
+    img_processed.save(output, format='JPEG', quality=95, optimize=False, subsampling='4:4:4')
+    output.seek(0)
+    jpg_data = output.getvalue()
+    print(f"Converted to JPG: {len(jpg_data)} bytes ({len(jpg_data)/1024:.1f} KB)")
+    return jpg_data
 
 def generate_apple_filename(team_member_token, index):
     """Generate Apple-style filename"""
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"IMG_{timestamp}_{index:04d}.jpg"
 
-def add_exif_data(img, team_member_token, session):
-    """Add realistic iPhone EXIF data to image"""
+def calculate_realistic_camera_settings(img, aperture_value):
+    """Calculate realistic ISO, exposure, and brightness based on image characteristics"""
+    # Analyze image brightness to determine realistic settings
+    img_gray = img.convert('L')
+    avg_brightness = sum(img_gray.getdata()) / (img.size[0] * img.size[1])
+    
+    # Brightness ranges from 0-255
+    if avg_brightness < 50:  # Dark scene
+        iso = random.randint(400, 1600)
+        exposure_denominator = random.randint(30, 200)
+    elif avg_brightness < 100:  # Low light
+        iso = random.randint(200, 800)
+        exposure_denominator = random.randint(50, 400)
+    elif avg_brightness < 150:  # Normal light
+        iso = random.randint(50, 400)
+        exposure_denominator = random.randint(100, 1000)
+    else:  # Bright scene
+        iso = random.randint(25, 200)
+        exposure_denominator = random.randint(500, 2000)
+    
+    # Calculate BrightnessValue (APEX system)
+    # BrightnessValue = log2((FNumber^2) / (ExposureTime * ISO))
+    f_number = aperture_value
+    exposure_time = 1.0 / exposure_denominator if exposure_denominator > 0 else 1.0
+    
+    if exposure_time > 0 and iso > 0:
+        # APEX formula: BV = log2((F^2) / (T * S))
+        # Where F = f-number, T = exposure time, S = ISO
+        brightness_apex = math.log2((f_number ** 2) / (exposure_time * iso))
+        # Convert to rational number format (numerator, denominator)
+        brightness_rational = (int(brightness_apex * 1000), 1000)
+    else:
+        brightness_rational = (0, 1)
+    
+    # Calculate ShutterSpeedValue (APEX)
+    # ShutterSpeedValue = -log2(T) where T is exposure time in seconds
+    if exposure_time > 0:
+        shutter_speed_value = -math.log2(exposure_time)
+        shutter_speed_rational = (int(shutter_speed_value * 1000), 1000)
+    else:
+        shutter_speed_rational = (0, 1)
+    
+    return iso, exposure_denominator, brightness_rational, shutter_speed_rational
+
+def generate_thumbnail(img, max_size=(160, 160)):
+    """Generate thumbnail for EXIF"""
     try:
-        # Random iPhone model selection (per batch consistency)
-        iphone_models = [
-            ("iPhone 14 Pro Max", "Apple", 48.0),
-            ("iPhone 16 Pro Max", "Apple", 48.0)
-        ]
-        model_name, make, megapixels = random.choice(iphone_models)
+        # Create thumbnail maintaining aspect ratio
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        thumb_output = io.BytesIO()
+        img.save(thumb_output, format='JPEG', quality=85)
+        return thumb_output.getvalue()
+    except:
+        return None
+
+def add_safe_exif_field(exif_dict, ifd, tag, value):
+    """Safely add EXIF field, skipping if tag doesn't exist"""
+    try:
+        if hasattr(piexif, ifd) and hasattr(getattr(piexif, ifd), tag):
+            tag_id = getattr(getattr(piexif, ifd), tag)
+            exif_dict[ifd][tag_id] = value
+    except (AttributeError, KeyError):
+        pass  # Field not supported, skip it
+
+def add_exif_data(img, team_member_token, session):
+    """
+    Add comprehensive, realistic iPhone EXIF data that passes fraud detection.
+    
+    This function creates EXIF metadata that closely matches real iPhone images:
+    - Realistic timestamp variations (not perfectly identical)
+    - Correlated ISO/exposure based on image brightness
+    - Complete camera metadata (aperture, flash, metering, etc.)
+    - Device-specific information (iOS version, lens model)
+    - GPS coordinates with realistic variation
+    - Thumbnail generation
+    
+    Note: Apple MakerNotes (proprietary binary format) are not fully supported
+    by piexif library. Real iPhones include extensive MakerNotes with processing
+    parameters, HDR info, etc. This is a limitation of the library, not the implementation.
+    """
+    try:
+        # Use session iPhone model for consistency
+        iphone_info = session['iphone']
+        model_name = iphone_info['name']
+        make = "Apple"
+        ios_version = iphone_info['ios_version']
+        lens_model = iphone_info['lens_model']
+        focal_length_tuple = iphone_info['focal_length']
+        aperture_tuple = iphone_info['aperture']
         
         # Use session GPS data for consistency
         lat, lon = session['base_lat'], session['base_lon']
+        device_serial = session['device_serial']
+        lens_serial = session['lens_serial']
         
-        # EXIF structure
+        # Get timestamps with realistic variations (not perfectly identical)
+        now = datetime.datetime.now()
+        base_datetime = now
+        
+        # DateTime (file modification) - can be slightly after capture
+        datetime_file = base_datetime + datetime.timedelta(milliseconds=random.randint(0, 500))
+        datetime_str_file = datetime_file.strftime("%Y:%m:%d %H:%M:%S")
+        
+        # DateTimeOriginal (capture time) - base time
+        datetime_str_original = base_datetime.strftime("%Y:%m:%d %H:%M:%S")
+        
+        # DateTimeDigitized (digitization) - can be same or slightly after original
+        datetime_digitized = base_datetime + datetime.timedelta(milliseconds=random.randint(0, 200))
+        datetime_str_digitized = datetime_digitized.strftime("%Y:%m:%d %H:%M:%S")
+        
+        # Calculate aperture value from f-number (matches FNumber exactly in real iPhone)
+        f_number = aperture_tuple[0] / aperture_tuple[1]
+        aperture_value = aperture_tuple  # ApertureValue should match FNumber in real iPhone
+        
+        # Calculate realistic camera settings based on image
+        iso, exposure_denominator, brightness_rational, shutter_speed_rational = calculate_realistic_camera_settings(img, f_number)
+        exposure_numerator = 1
+        
+        # Get timezone offset (realistic timezone based on GPS location)
+        # Calculate timezone offset based on longitude (simplified)
+        # Real iPhones use actual timezone, but we'll use a reasonable approximation
+        timezone_hours = int(lon / 15)  # Rough timezone calculation
+        timezone_offset_str = f"{timezone_hours:+03d}:00"
+        
+        # Add OffsetTime fields (timezone offsets) - use raw tag IDs
+        # These are EXIF tags 0x9010, 0x9011, 0x9012
+        offset_time_original = timezone_offset_str.encode('utf-8')
+        offset_time_digitized = timezone_offset_str.encode('utf-8')
+        offset_time = timezone_offset_str.encode('utf-8')
+        
+        # SubSecTime should match across all fields (real iPhone behavior)
+        subsec_time = str(random.randint(0, 999)).zfill(3)
+        
+        # Standard iPhone resolution (72 DPI is most common)
+        resolution = 72
+        resolution_unit = 2  # 2 = inches
+        
+        # Generate thumbnail
+        thumbnail_data = generate_thumbnail(img.copy())
+        
+        # Get additional iPhone info
+        lens_id = iphone_info.get('lens_id', lens_model)
+        lens_info = iphone_info.get('lens_info', '')
+        focal_length_35mm = iphone_info.get('focal_length_35mm', 26)
+        fov = iphone_info.get('fov', 69.4)
+        
+        # Build comprehensive EXIF structure matching real iPhone data
         exif_dict = {
             "0th": {
-                piexif.ImageIFD.Make: make,
-                piexif.ImageIFD.Model: model_name,
-                piexif.ImageIFD.Software: "iOS 18.0",
-                piexif.ImageIFD.DateTime: datetime.datetime.now().strftime("%Y:%m:%d %H:%M:%S"),
-                piexif.ImageIFD.Orientation: 1,  # Normal orientation (no rotation)
+                piexif.ImageIFD.Make: make.encode('utf-8'),
+                piexif.ImageIFD.Model: model_name.encode('utf-8'),
+                piexif.ImageIFD.Software: ios_version.encode('utf-8'),  # Just version number, no "iOS" prefix
+                piexif.ImageIFD.DateTime: datetime_str_file,
+                piexif.ImageIFD.Orientation: 1,  # Normal orientation (can be 6 for rotated, but 1 is common)
+                piexif.ImageIFD.XResolution: (resolution, 1),
+                piexif.ImageIFD.YResolution: (resolution, 1),
+                piexif.ImageIFD.ResolutionUnit: resolution_unit,
+                piexif.ImageIFD.Artist: "Apple".encode('utf-8'),
             },
             "Exif": {
-                piexif.ExifIFD.DateTimeOriginal: datetime.datetime.now().strftime("%Y:%m:%d %H:%M:%S"),
-                piexif.ExifIFD.FocalLength: (26, 1),
-                piexif.ExifIFD.ISOSpeedRatings: random.randint(50, 400),
-                piexif.ExifIFD.ExposureTime: (1, random.randint(100, 2000)),
+                # ExifVersion (0232 in real iPhone)
+                piexif.ExifIFD.ExifVersion: b"0232",
+                
+                # Date/Time fields with variations
+                piexif.ExifIFD.DateTimeOriginal: datetime_str_original,
+                piexif.ExifIFD.DateTimeDigitized: datetime_str_digitized,
+                
+                # SubSecTime fields - should match across all (real iPhone behavior)
+                piexif.ExifIFD.SubSecTime: subsec_time.encode('utf-8'),
+                piexif.ExifIFD.SubSecTimeOriginal: subsec_time.encode('utf-8'),
+                piexif.ExifIFD.SubSecTimeDigitized: subsec_time.encode('utf-8'),
+                
+                # OffsetTime fields (timezone offsets) - added via raw tags below
+                
+                # Camera settings
+                piexif.ExifIFD.FocalLength: focal_length_tuple,
+                piexif.ExifIFD.FocalLengthIn35mmFilm: focal_length_35mm,
+                piexif.ExifIFD.FNumber: aperture_tuple,
+                piexif.ExifIFD.ApertureValue: aperture_value,  # Matches FNumber in real iPhone
+                piexif.ExifIFD.ISOSpeedRatings: iso,
+                piexif.ExifIFD.ExposureTime: (exposure_numerator, exposure_denominator),
+                piexif.ExifIFD.ShutterSpeedValue: shutter_speed_rational,  # APEX value
+                piexif.ExifIFD.ExposureBiasValue: (0, 1),  # No exposure compensation
+                piexif.ExifIFD.ExposureMode: 0,  # 0 = Auto exposure
+                piexif.ExifIFD.ExposureProgram: 2,  # 2 = Program AE (matches real iPhone)
+                piexif.ExifIFD.MeteringMode: 5,  # 5 = Multi-segment (matches real iPhone)
+                
+                # BrightnessValue (calculated from exposure settings)
+                piexif.ExifIFD.BrightnessValue: brightness_rational,
+                
+                # Image characteristics
                 piexif.ExifIFD.PixelXDimension: img.size[0],
                 piexif.ExifIFD.PixelYDimension: img.size[1],
+                piexif.ExifIFD.ColorSpace: 65535,  # Uncalibrated (CRITICAL: matches real iPhone, not sRGB!)
+                piexif.ExifIFD.WhiteBalance: 0,  # 0 = Auto
+                piexif.ExifIFD.SceneCaptureType: 0,  # 0 = Standard
+                piexif.ExifIFD.SceneType: 1,  # 1 = Directly photographed
+                piexif.ExifIFD.CustomRendered: 0,  # 0 = Normal process
+                piexif.ExifIFD.DigitalZoomRatio: (1, 1),  # No digital zoom
+                
+                # Flash information
+                piexif.ExifIFD.Flash: 16,  # 16 = Flash did not fire, auto mode
+                piexif.ExifIFD.FlashPixVersion: b"0100",  # FlashPix Version 1.0
+                
+                # Light source
+                piexif.ExifIFD.LightSource: 0,  # 0 = Unknown (auto)
+                
+                # SensingMethod
+                piexif.ExifIFD.SensingMethod: 2,  # 2 = One-chip color area sensor
             },
             "GPS": {
+                piexif.GPSIFD.GPSVersionID: (2, 2, 0, 0),
                 piexif.GPSIFD.GPSLatitude: _decimal_to_dms(abs(lat)),
                 piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
                 piexif.GPSIFD.GPSLongitude: _decimal_to_dms(abs(lon)),
                 piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
-            }
+                piexif.GPSIFD.GPSDateStamp: base_datetime.strftime("%Y:%m:%d"),
+                piexif.GPSIFD.GPSTimeStamp: (
+                    (base_datetime.hour, 1),
+                    (base_datetime.minute, 1),
+                    (base_datetime.second, 1)
+                ),
+                piexif.GPSIFD.GPSAltitudeRef: 0,  # 0 = Above sea level
+                piexif.GPSIFD.GPSAltitude: (random.randint(0, 500), 1),  # Random altitude 0-500m
+                piexif.GPSIFD.GPSMapDatum: "WGS-84".encode('utf-8'),
+            },
+            "1st": {}  # Thumbnail IFD
         }
         
-        # Save with EXIF
-        exif_bytes = piexif.dump(exif_dict)
+        # Add unofficial but commonly used tags (LensModel, LensMake, LensInfo, HostComputer)
+        # Also add OffsetTime fields (timezone offsets)
+        try:
+            exif_dict["Exif"][0xA432] = lens_model.encode('utf-8')  # LensModel
+            exif_dict["Exif"][0xA433] = make.encode('utf-8')  # LensMake
+            if lens_info:
+                exif_dict["Exif"][0xA434] = lens_info.encode('utf-8')  # LensInfo
+            exif_dict["Exif"][0xA435] = lens_id.encode('utf-8')  # LensID (unofficial)
+            exif_dict["Exif"][0x013C] = model_name.encode('utf-8')  # HostComputer
+            
+            # OffsetTime fields (timezone offsets) - EXIF tags 0x9010, 0x9011, 0x9012
+            exif_dict["Exif"][0x9010] = offset_time_original  # OffsetTimeOriginal
+            exif_dict["Exif"][0x9011] = offset_time_digitized  # OffsetTimeDigitized
+            exif_dict["Exif"][0x9012] = offset_time  # OffsetTime
+        except:
+            pass  # Not critical if unsupported
+        
+        # Add thumbnail if generated
+        if thumbnail_data:
+            try:
+                exif_dict["1st"] = {
+                    piexif.ImageIFD.JPEGInterchangeFormat: 0,  # Offset will be set by piexif
+                    piexif.ImageIFD.JPEGInterchangeFormatLength: len(thumbnail_data),
+                }
+            except:
+                pass  # Thumbnail addition is optional
+        
+        # Try to add lens information if supported (some piexif versions don't have these)
+        try:
+            # These are unofficial but commonly used tags
+            exif_dict["Exif"][0xA432] = lens_model.encode('utf-8')  # LensModel (unofficial)
+            exif_dict["Exif"][0xA433] = make.encode('utf-8')  # LensMake (unofficial)
+        except:
+            pass  # Not critical if unsupported
+        
+        # Convert EXIF dict to bytes
+        try:
+            exif_bytes = piexif.dump(exif_dict)
+        except Exception as e:
+            print(f"Warning: Some EXIF fields may not be supported: {e}")
+            # Try again with a minimal set
+            minimal_exif = {
+                "0th": exif_dict["0th"],
+                "Exif": {k: v for k, v in exif_dict["Exif"].items() if k in [
+                    piexif.ExifIFD.DateTimeOriginal,
+                    piexif.ExifIFD.DateTimeDigitized,
+                    piexif.ExifIFD.FocalLength,
+                    piexif.ExifIFD.FNumber,
+                    piexif.ExifIFD.ISOSpeedRatings,
+                    piexif.ExifIFD.ExposureTime,
+                    piexif.ExifIFD.PixelXDimension,
+                    piexif.ExifIFD.PixelYDimension,
+                    piexif.ExifIFD.ColorSpace,
+                ]},
+                "GPS": exif_dict["GPS"],
+                "1st": {}
+            }
+            exif_bytes = piexif.dump(minimal_exif)
+        
+        # Save image with EXIF data
         output = io.BytesIO()
-        img.save(output, format='JPEG', exif=exif_bytes, quality=95)
-        return output.getvalue()
+        img.save(output, format='JPEG', exif=exif_bytes, quality=95, optimize=False)
+        output.seek(0)
+        image_data = output.getvalue()
+        
+        print(f"EXIF data added: {model_name} (iOS {ios_version}), GPS: {lat:.4f}, {lon:.4f}, ISO: {iso}, Exposure: 1/{exposure_denominator}, Size: {len(image_data)} bytes")
+        
+        return image_data
         
     except Exception as e:
         print(f"Error adding EXIF data: {e}")
+        traceback.print_exc()
         # Return image without EXIF if there's an error
         output = io.BytesIO()
-        img.save(output, format='JPEG', quality=95)
+        img.save(output, format='JPEG', quality=95, optimize=False)
         return output.getvalue()
 
 def _decimal_to_dms(decimal):
