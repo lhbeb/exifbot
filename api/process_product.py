@@ -314,6 +314,11 @@ def add_exif_data(img, team_member_token, session):
         focal_length_35mm = iphone_info.get('focal_length_35mm', 26)
         fov = iphone_info.get('fov', 69.4)
         
+        # Validate calculated values before adding to EXIF
+        # Check if brightness and shutter speed values are valid (not NaN or infinity)
+        valid_brightness = brightness_rational and len(brightness_rational) == 2 and brightness_rational[1] != 0
+        valid_shutter = shutter_speed_rational and len(shutter_speed_rational) == 2 and shutter_speed_rational[1] != 0
+        
         # Build comprehensive EXIF structure matching real iPhone data
         exif_dict = {
             "0th": {
@@ -349,14 +354,11 @@ def add_exif_data(img, team_member_token, session):
                 piexif.ExifIFD.ApertureValue: aperture_value,  # Matches FNumber in real iPhone
                 piexif.ExifIFD.ISOSpeedRatings: iso,
                 piexif.ExifIFD.ExposureTime: (exposure_numerator, exposure_denominator),
-                piexif.ExifIFD.ShutterSpeedValue: shutter_speed_rational,  # APEX value
+                # ShutterSpeedValue and BrightnessValue added conditionally below if valid
                 piexif.ExifIFD.ExposureBiasValue: (0, 1),  # No exposure compensation
                 piexif.ExifIFD.ExposureMode: 0,  # 0 = Auto exposure
                 piexif.ExifIFD.ExposureProgram: 2,  # 2 = Program AE (matches real iPhone)
                 piexif.ExifIFD.MeteringMode: 5,  # 5 = Multi-segment (matches real iPhone)
-                
-                # BrightnessValue (calculated from exposure settings)
-                piexif.ExifIFD.BrightnessValue: brightness_rational,
                 
                 # Image characteristics
                 piexif.ExifIFD.PixelXDimension: img.size[0],
@@ -370,7 +372,7 @@ def add_exif_data(img, team_member_token, session):
                 
                 # Flash information
                 piexif.ExifIFD.Flash: 16,  # 16 = Flash did not fire, auto mode
-                piexif.ExifIFD.FlashPixVersion: b"0100",  # FlashPix Version 1.0
+                piexif.ExifIFD.FlashpixVersion: b"0100",  # FlashPix Version 1.0 (note: lowercase 'p' in attribute name)
                 
                 # Light source
                 piexif.ExifIFD.LightSource: 0,  # 0 = Unknown (auto)
@@ -378,24 +380,43 @@ def add_exif_data(img, team_member_token, session):
                 # SensingMethod
                 piexif.ExifIFD.SensingMethod: 2,  # 2 = One-chip color area sensor
             },
-            "GPS": {
-                piexif.GPSIFD.GPSVersionID: (2, 2, 0, 0),
-                piexif.GPSIFD.GPSLatitude: _decimal_to_dms(abs(lat)),
-                piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
-                piexif.GPSIFD.GPSLongitude: _decimal_to_dms(abs(lon)),
-                piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
-                piexif.GPSIFD.GPSDateStamp: base_datetime.strftime("%Y:%m:%d"),
-                piexif.GPSIFD.GPSTimeStamp: (
-                    (base_datetime.hour, 1),
-                    (base_datetime.minute, 1),
-                    (base_datetime.second, 1)
-                ),
-                piexif.GPSIFD.GPSAltitudeRef: 0,  # 0 = Above sea level
-                piexif.GPSIFD.GPSAltitude: (random.randint(0, 500), 1),  # Random altitude 0-500m
-                piexif.GPSIFD.GPSMapDatum: "WGS-84".encode('utf-8'),
-            },
-            "1st": {}  # Thumbnail IFD
         }
+        
+        # Add calculated values only if they're valid
+        if valid_brightness:
+            try:
+                exif_dict["Exif"][piexif.ExifIFD.BrightnessValue] = brightness_rational
+            except:
+                pass
+        if valid_shutter:
+            try:
+                exif_dict["Exif"][piexif.ExifIFD.ShutterSpeedValue] = shutter_speed_rational
+            except:
+                pass
+        
+        # Add GPS and thumbnail IFD to exif_dict
+        exif_dict["GPS"] = {
+            piexif.GPSIFD.GPSVersionID: (2, 2, 0, 0),
+            piexif.GPSIFD.GPSLatitude: _decimal_to_dms(abs(lat)),
+            piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
+            piexif.GPSIFD.GPSLongitude: _decimal_to_dms(abs(lon)),
+            piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
+            piexif.GPSIFD.GPSDateStamp: base_datetime.strftime("%Y:%m:%d"),
+            piexif.GPSIFD.GPSTimeStamp: (
+                (base_datetime.hour, 1),
+                (base_datetime.minute, 1),
+                (base_datetime.second, 1)
+            ),
+            piexif.GPSIFD.GPSAltitudeRef: 0,  # 0 = Above sea level
+            piexif.GPSIFD.GPSAltitude: (random.randint(0, 500), 1),  # Random altitude 0-500m
+            piexif.GPSIFD.GPSMapDatum: "WGS-84".encode('utf-8'),
+        }
+        exif_dict["1st"] = {}  # Thumbnail IFD
+        
+        # Ensure we have at least basic structure
+        if not exif_dict.get("0th") or not exif_dict.get("Exif"):
+            print(f"✗ ERROR: EXIF dict structure is invalid!")
+            raise ValueError("Invalid EXIF dict structure")
         
         # Add unofficial but commonly used tags AFTER initial dump attempt
         # These will be added to a copy if the first dump succeeds
@@ -506,7 +527,7 @@ def add_exif_data(img, team_member_token, session):
             except Exception as e2:
                 print(f"ERROR: Minimal EXIF dump also failed: {e2}")
                 traceback.print_exc()
-                # Last resort: basic EXIF only
+                # Last resort: absolute minimal EXIF (guaranteed to work)
                 try:
                     basic_exif = {
                         "0th": {
@@ -518,10 +539,30 @@ def add_exif_data(img, team_member_token, session):
                         },
                     }
                     exif_bytes = piexif.dump(basic_exif)
-                    print(f"Basic EXIF dump successful: {len(exif_bytes)} bytes")
+                    if exif_bytes and len(exif_bytes) > 0:
+                        print(f"✓ Basic EXIF dump successful: {len(exif_bytes)} bytes")
+                    else:
+                        print(f"✗ ERROR: Basic EXIF dump returned empty!")
+                        exif_bytes = None
                 except Exception as e3:
-                    print(f"ERROR: Even basic EXIF failed: {e3}")
+                    print(f"✗ CRITICAL ERROR: Even basic EXIF failed: {e3}")
+                    traceback.print_exc()
                     exif_bytes = None
+                    
+                    # Final fallback: create absolute minimal EXIF manually
+                    # This should NEVER fail - just Make and Model
+                    try:
+                        absolute_minimal = {
+                            "0th": {
+                                piexif.ImageIFD.Make: b"Apple",
+                                piexif.ImageIFD.Model: model_name.encode('utf-8')[:20],  # Limit length
+                            },
+                        }
+                        exif_bytes = piexif.dump(absolute_minimal)
+                        print(f"✓ Absolute minimal EXIF created: {len(exif_bytes)} bytes")
+                    except Exception as e4:
+                        print(f"✗ FATAL: Cannot create ANY EXIF data: {e4}")
+                        exif_bytes = None
         
         # Save image with EXIF data using piexif.insert() (most reliable method)
         # Ensure image is in RGB mode (required for JPEG)
@@ -532,33 +573,51 @@ def add_exif_data(img, team_member_token, session):
         jpeg_buffer = io.BytesIO()
         img.save(jpeg_buffer, format='JPEG', quality=95, optimize=False)
         jpeg_bytes = jpeg_buffer.getvalue()
+        print(f"JPEG created: {len(jpeg_bytes)} bytes")
         
-        if exif_bytes:
+        if exif_bytes and len(exif_bytes) > 0:
             try:
                 # Use piexif.insert() to inject EXIF into JPEG bytes (most reliable method)
+                print(f"Attempting piexif.insert(): EXIF={len(exif_bytes)} bytes, JPEG={len(jpeg_bytes)} bytes")
                 image_data = piexif.insert(exif_bytes, jpeg_bytes)
-                print(f"✓ EXIF inserted using piexif.insert(): {len(exif_bytes)} bytes EXIF, {len(image_data)} bytes total")
+                print(f"✓ piexif.insert() completed: Result size={len(image_data)} bytes")
                 
                 # Verify EXIF was embedded by trying to read it back
                 try:
                     verify_exif = piexif.load(image_data)
-                    if verify_exif.get('0th') or verify_exif.get('Exif') or verify_exif.get('GPS'):
-                        print(f"✓ EXIF verification successful: Found {len(verify_exif.get('0th', {}))} 0th tags, {len(verify_exif.get('Exif', {}))} Exif tags, {len(verify_exif.get('GPS', {}))} GPS tags")
+                    if verify_exif:
+                        print(f"✓ EXIF verification: Loaded EXIF data")
+                        print(f"  - 0th tags: {len(verify_exif.get('0th', {}))}")
+                        print(f"  - Exif tags: {len(verify_exif.get('Exif', {}))}")
+                        print(f"  - GPS tags: {len(verify_exif.get('GPS', {}))}")
+                        
+                        # Check for key fields
+                        if verify_exif.get('0th', {}).get(piexif.ImageIFD.Make):
+                            print(f"  - Make: {verify_exif['0th'][piexif.ImageIFD.Make]}")
+                        if verify_exif.get('0th', {}).get(piexif.ImageIFD.Model):
+                            print(f"  - Model: {verify_exif['0th'][piexif.ImageIFD.Model]}")
                     else:
-                        print(f"⚠ WARNING: EXIF inserted but verification found no tags")
+                        print(f"✗ WARNING: EXIF verification returned None/empty")
                 except Exception as verify_err:
-                    print(f"⚠ EXIF verification error (but data was inserted): {verify_err}")
+                    print(f"✗ EXIF verification failed: {verify_err}")
+                    traceback.print_exc()
                 
                 output = io.BytesIO(image_data)
             except Exception as e:
-                print(f"ERROR: piexif.insert() failed: {e}")
+                print(f"✗ ERROR: piexif.insert() failed: {e}")
+                print(f"  EXIF bytes length: {len(exif_bytes) if exif_bytes else 0}")
+                print(f"  JPEG bytes length: {len(jpeg_bytes)}")
                 traceback.print_exc()
                 # Fall back to image without EXIF
                 output = io.BytesIO(jpeg_bytes)
                 print(f"✗ Image saved WITHOUT EXIF due to piexif.insert() failure")
         else:
             # No EXIF data available
-            print(f"WARNING: No EXIF data to embed, saving image without EXIF")
+            print(f"✗ WARNING: No EXIF data to embed (exif_bytes is None or empty)")
+            if exif_bytes is None:
+                print(f"  Reason: exif_bytes is None")
+            elif len(exif_bytes) == 0:
+                print(f"  Reason: exif_bytes is empty (0 bytes)")
             output = io.BytesIO(jpeg_bytes)
         
         output.seek(0)
@@ -577,6 +636,101 @@ def add_exif_data(img, team_member_token, session):
         img.save(output, format='JPEG', quality=95, optimize=False)
         print(f"Returned image WITHOUT EXIF due to error")
         return output.getvalue()
+
+def validate_iphone_exif(image_bytes):
+    """
+    Validate that image contains required iPhone EXIF attributes.
+    Returns (is_valid, missing_fields, error_message)
+    """
+    try:
+        # Load EXIF data from image
+        exif_data = piexif.load(image_bytes)
+        
+        if not exif_data:
+            return False, [], "No EXIF data found in image"
+        
+        # Required fields for iPhone validation
+        required_fields = {
+            '0th': [
+                ('Make', piexif.ImageIFD.Make, 'Apple'),
+                ('Model', piexif.ImageIFD.Model, None),  # Any iPhone model is OK
+                ('Software', piexif.ImageIFD.Software, None),  # iOS version
+            ],
+            'Exif': [
+                ('DateTimeOriginal', piexif.ExifIFD.DateTimeOriginal, None),
+                ('FocalLength', piexif.ExifIFD.FocalLength, None),
+                ('FNumber', piexif.ExifIFD.FNumber, None),
+                ('ISOSpeedRatings', piexif.ExifIFD.ISOSpeedRatings, None),
+                ('ExposureTime', piexif.ExifIFD.ExposureTime, None),
+                ('ColorSpace', piexif.ExifIFD.ColorSpace, 65535),  # Must be Uncalibrated
+            ],
+            'GPS': [
+                ('GPSLatitude', piexif.GPSIFD.GPSLatitude, None),
+                ('GPSLongitude', piexif.GPSIFD.GPSLongitude, None),
+            ]
+        }
+        
+        missing_fields = []
+        validation_errors = []
+        
+        # Check each required field
+        for ifd_name, fields in required_fields.items():
+            ifd_data = exif_data.get(ifd_name, {})
+            if not ifd_data:
+                missing_fields.append(f"{ifd_name} IFD missing")
+                continue
+            
+            for field_name, field_tag, expected_value in fields:
+                if field_tag not in ifd_data:
+                    missing_fields.append(f"{ifd_name}.{field_name}")
+                elif expected_value is not None:
+                    actual_value = ifd_data[field_tag]
+                    if actual_value != expected_value:
+                        validation_errors.append(
+                            f"{ifd_name}.{field_name}: expected {expected_value}, got {actual_value}"
+                        )
+        
+        # Check Make is Apple
+        make_value = exif_data.get('0th', {}).get(piexif.ImageIFD.Make)
+        if make_value:
+            make_str = make_value.decode('utf-8') if isinstance(make_value, bytes) else str(make_value)
+            if 'Apple' not in make_str and 'apple' not in make_str.lower():
+                validation_errors.append(f"Make is not Apple: {make_str}")
+        
+        # Check Model contains iPhone
+        model_value = exif_data.get('0th', {}).get(piexif.ImageIFD.Model)
+        if model_value:
+            model_str = model_value.decode('utf-8') if isinstance(model_value, bytes) else str(model_value)
+            if 'iPhone' not in model_str and 'iphone' not in model_str.lower():
+                validation_errors.append(f"Model is not iPhone: {model_str}")
+        
+        # Validation passed if no missing critical fields
+        is_valid = len(missing_fields) == 0 and len(validation_errors) == 0
+        
+        error_message = ""
+        if missing_fields:
+            error_message += f"Missing fields: {', '.join(missing_fields)}. "
+        if validation_errors:
+            error_message += f"Validation errors: {', '.join(validation_errors)}"
+        
+        if is_valid:
+            # Log successful validation details
+            make = exif_data.get('0th', {}).get(piexif.ImageIFD.Make, b'').decode('utf-8', errors='ignore')
+            model = exif_data.get('0th', {}).get(piexif.ImageIFD.Model, b'').decode('utf-8', errors='ignore')
+            print(f"✓ EXIF validation PASSED: {make} {model}")
+            print(f"  - 0th tags: {len(exif_data.get('0th', {}))}")
+            print(f"  - Exif tags: {len(exif_data.get('Exif', {}))}")
+            print(f"  - GPS tags: {len(exif_data.get('GPS', {}))}")
+        else:
+            print(f"✗ EXIF validation FAILED: {error_message}")
+        
+        return is_valid, missing_fields, error_message
+        
+    except Exception as e:
+        error_msg = f"EXIF validation error: {str(e)}"
+        print(f"✗ {error_msg}")
+        traceback.print_exc()
+        return False, [], error_msg
 
 def _decimal_to_dms(decimal):
     """Convert decimal coordinates to DMS format"""
@@ -781,29 +935,83 @@ class handler(BaseHTTPRequestHandler):
             rewritten_text = call_gemini_api(text)
             print(f"Gemini API response length: {len(rewritten_text)} characters")
             
-            # Process images
+            # Process images with EXIF validation
             processed_images = []
+            validation_failures = []
+            
             for i, image_data in enumerate(images):
                 print(f"Processing image {i+1}/{len(images)}...")
                 
-                # Convert to JPG
-                jpg_data = convert_to_jpg(image_data['data'])
+                try:
+                    # Convert to JPG
+                    jpg_data = convert_to_jpg(image_data['data'])
+                    
+                    # Create PIL Image for EXIF data
+                    img = Image.open(io.BytesIO(jpg_data))
+                    
+                    # Add EXIF data
+                    img_with_exif = add_exif_data(img, team_member_token, session)
+                    
+                    # Validate EXIF was properly embedded
+                    print(f"Validating EXIF for image {i+1}...")
+                    is_valid, missing_fields, error_message = validate_iphone_exif(img_with_exif)
+                    
+                    if not is_valid:
+                        validation_failures.append({
+                            'image_index': i + 1,
+                            'filename': image_data.get('filename', f'image_{i+1}'),
+                            'missing_fields': missing_fields,
+                            'error': error_message
+                        })
+                        print(f"✗ Image {i+1} FAILED validation - will not be included in ZIP")
+                        continue
+                    
+                    # Generate filename
+                    filename = generate_apple_filename(team_member_token, i+1)
+                    
+                    processed_images.append({
+                        'filename': filename,
+                        'data': img_with_exif
+                    })
+                    
+                    print(f"✓ Image {i+1} processed and validated: {filename}")
+                    
+                except Exception as e:
+                    print(f"✗ Error processing image {i+1}: {e}")
+                    traceback.print_exc()
+                    validation_failures.append({
+                        'image_index': i + 1,
+                        'filename': image_data.get('filename', f'image_{i+1}'),
+                        'error': f"Processing error: {str(e)}"
+                    })
+            
+            # Check if we have any valid images
+            if len(processed_images) == 0:
+                error_msg = "All images failed EXIF validation. No images to deliver."
+                if validation_failures:
+                    error_details = "; ".join([f"Image {f['image_index']}: {f['error']}" for f in validation_failures])
+                    error_msg += f" Details: {error_details}"
                 
-                # Create PIL Image for EXIF data
-                img = Image.open(io.BytesIO(jpg_data))
+                print(f"✗ {error_msg}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
                 
-                # Add EXIF data
-                img_with_exif = add_exif_data(img, team_member_token, session)
-                
-                # Generate filename
-                filename = generate_apple_filename(team_member_token, i+1)
-                
-                processed_images.append({
-                    'filename': filename,
-                    'data': img_with_exif
-                })
-                
-                print(f"Image {i+1} processed: {filename}")
+                error_response = {
+                    "error": error_msg,
+                    "validation_failures": validation_failures,
+                    "images_processed": 0,
+                    "images_validated": 0
+                }
+                self.wfile.write(json.dumps(error_response).encode('utf-8'))
+                return
+            
+            # Warn if some images failed validation
+            if len(validation_failures) > 0:
+                print(f"⚠ WARNING: {len(validation_failures)} image(s) failed validation, but {len(processed_images)} image(s) passed and will be delivered")
+                for failure in validation_failures:
+                    print(f"  - Image {failure['image_index']}: {failure['error']}")
             
             # Create zip file
             print("Creating zip file...")
@@ -830,11 +1038,18 @@ class handler(BaseHTTPRequestHandler):
             response_data = {
                 "message": "Product processed successfully",
                 "images_processed": len(images),
+                "images_validated": len(processed_images),
+                "images_failed_validation": len(validation_failures),
                 "zip_file": zip_base64,
                 "filename": f"{team_member_token}_product.zip"
             }
             
-            print(f"Processing complete for {team_member_token}: {len(images)} images processed, zip size: {len(zip_data)} bytes")
+            # Include validation failures in response if any
+            if len(validation_failures) > 0:
+                response_data["validation_warnings"] = validation_failures
+                response_data["message"] = f"Product processed: {len(processed_images)}/{len(images)} images validated and delivered"
+            
+            print(f"Processing complete for {team_member_token}: {len(processed_images)}/{len(images)} images validated, zip size: {len(zip_data)} bytes")
             
             # Send completion notification
             send_notification('processing_complete', {

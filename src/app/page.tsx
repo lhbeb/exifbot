@@ -313,8 +313,17 @@ export default function Home() {
         imageUrlCount: data.image_urls?.length || 0,
         teamMember: data.team_member,
         hasZipFile: !!data.zip_file,
-        zipFileSize: data.zip_file?.length || 0
+        zipFileSize: data.zip_file?.length || 0,
+        imagesValidated: data.images_validated,
+        imagesFailedValidation: data.images_failed_validation
       });
+      
+      // Show validation warnings if any images failed
+      if (data.images_failed_validation > 0) {
+        const warningMsg = `Warning: ${data.images_failed_validation} image(s) failed EXIF validation and were not included. ${data.images_validated} image(s) validated successfully.`;
+        console.warn(warningMsg);
+        // You could also show this to the user in the UI
+      }
 
       if (data.zip_file) {
         const zipData = atob(data.zip_file);
